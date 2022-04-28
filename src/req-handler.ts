@@ -2,7 +2,12 @@
 
 import { Wallet, Net } from '@vechain/connex-driver';
 import * as thor from 'web3-providers-connex';
-import { JsonRpcRequest, JsonRpcResponse, parseReqData } from './json-rpc';
+import {
+	JsonRpcRequest,
+	JsonRpcResponse,
+	parseReqData,
+	parseErrFromProvider
+} from './json-rpc';
 import WebSocket from 'websocket';
 import http from 'http';
 import { parse as parseEthRawTx } from '@ethersproject/transactions';
@@ -24,18 +29,18 @@ export class ReqHandler {
 		const data = parseWsReq(req, conn);
 		if (!data) { return; }
 
-		const result = await this._request(data);
+		const resultOrError = await this._request(data);
 
-		sendWsResponse(conn, result);
+		sendWsResponse(conn, resultOrError);
 	}
 
 	handleHttpReq = async (req: http.IncomingMessage, resp: http.ServerResponse) => {
 		const data = await parseHttpReq(req, resp);
 		if (!data) { return; }
 
-		const result = await this._request(data);
+		const resultOrError = await this._request(data);
 
-		sendHttpResponse(resp, result);
+		sendHttpResponse(resp, resultOrError);
 	}
 
 	private _request = async (req: JsonRpcRequest): Promise<JsonRpcResponse> => {
@@ -65,26 +70,30 @@ export class ReqHandler {
 				result: result,
 			};
 		} catch (err: any) {
+			const error = parseErrFromProvider(err);
+
 			return {
 				id: req.id,
 				jsonrpc: '2.0',
-				error: err,
+				error: error,
 			};
 		}
 	}
 }
 
-function sendWsResponse(conn: WebSocket.connection, result: any) {
-	console.log(`${now()} Sending ws response ${JSON.stringify(result)}`);
 
-	conn.sendUTF(JSON.stringify(result));
+
+function sendWsResponse(conn: WebSocket.connection, resultOrError: JsonRpcResponse) {
+	console.log(`${now()} Sending ws response ${JSON.stringify(resultOrError)}`);
+
+	conn.sendUTF(JSON.stringify(resultOrError));
 }
 
-function sendHttpResponse(resp: http.ServerResponse, result: any) {
-	// console.log(`${now()} Sending http response ${JSON.stringify(result)}`);
+function sendHttpResponse(resp: http.ServerResponse, resultOrError: JsonRpcResponse) {
+	console.log(`${now()} Sending http response ${JSON.stringify(resultOrError)}`);
 
-	if (result) {
-		const responseStr = JSON.stringify(result);
+	if (resultOrError) {
+		const responseStr = JSON.stringify(resultOrError);
 		resp.setHeader('Content-Type', 'application/json');
 		resp.setHeader('Content-Length', Buffer.byteLength(responseStr));
 		resp.write(responseStr);
@@ -113,19 +122,19 @@ async function parseHttpReq(
 
 	const data = Buffer.concat(buffers).toString();
 
-	const method = <string>(JSON.parse(data)).method;
-	if (
-		method !== 'eth_getBalance' &&
-		method !== 'eth_blockNumber' &&
-		method !== 'eth_getBlockByNumber'
-	) {
-		console.log(`${now()} Processing http request ${data}`);
-	}
+	// const method = <string>(JSON.parse(data)).method;
+	// if (
+	// 	method !== 'eth_getBalance' &&
+	// 	method !== 'eth_blockNumber' &&
+	// 	method !== 'eth_getBlockByNumber'
+	// ) {
+	console.log(`${now()} Processing http request ${JSON.stringify(JSON.parse(data))}`);
+	// }
 
 	try {
 		return parseReqData(data);
 	} catch (err: any) {
-		sendHttpResponse(resp, err);
+		sendHttpResponse(resp, <JsonRpcResponse>err);
 		return null;
 	}
 }
@@ -178,7 +187,7 @@ function parseWsReq(
 		data = msg.binaryData.toString();
 	}
 
-	console.log(`${now()} Processing ws request ${data}`);
+	console.log(`${now()} Processing ws request ${JSON.stringify(JSON.parse(data))}`);
 
 	try {
 		return parseReqData(data);

@@ -1,8 +1,5 @@
 'use strict';
 
-import WebSocket from 'websocket';
-import http from 'http';
-
 export enum ErrCode {
 	// Standard
 	PARSE_ERROR = -32700,
@@ -106,7 +103,11 @@ export function parseReqData(data: string): JsonRpcRequest {
 	try {
 		json = JSON.parse(data);
 	} catch (err: any) {
-		throw getPredefinedErr(ErrCode.PARSE_ERROR)
+		throw {
+			id: null,
+			jsonrpc: '2.0',
+			error: getPredefinedErr(ErrCode.PARSE_ERROR)
+		};
 	}
 
 	if (
@@ -117,7 +118,19 @@ export function parseReqData(data: string): JsonRpcRequest {
 		// jsonrpc: required, '2.0'
 		|| !json.jsonrpc || json.jsonrpc !== '2.0'
 	) {
-		throw getPredefinedErr(ErrCode.INVALID_REQUEST);
+		throw {
+			id: json.id || null,
+			jsonrpc: '2.0',
+			error: getPredefinedErr(ErrCode.INVALID_REQUEST)
+		};
+	}
+
+	if (!ethJsonRpcMethods.find(method => method === json.method)) {
+		throw {
+			id: json.id || null,
+			jsonrpc: '2.0',
+			error: getPredefinedErr(ErrCode.METHOD_NOT_FOUND)
+		};
 	}
 
 	return {
@@ -125,5 +138,45 @@ export function parseReqData(data: string): JsonRpcRequest {
 		jsonrpc: json.jsonrpc,
 		method: json.method,
 		params: json.params || []
+	}
+}
+
+export function parseErrFromProvider(err: any): JsonRpcError {
+	let msg: string | undefined;
+	if (err.message) { msg = err.message; }
+	if (typeof err === 'string') { msg = err; }
+
+	if (!msg) { 
+		return {
+			code: ErrCode.INTERNAL_ERROR,
+			message: JSON.stringify(err),
+		}
+	}
+
+	if (msg.startsWith('Method not supported:')) {
+		return {
+			code: ErrCode.METHOD_NOT_SUPPORT,
+			message: msg
+		}
+	}
+
+	if (msg.startsWith('Parameter not supported')) {
+		return {
+			code: ErrCode.INVALID_PARAMS,
+			message: msg,
+		}
+	}
+
+	if (msg.startsWith('Argument missing or invalid')) {
+		return {
+			code: ErrCode.INVALID_INPUT,
+			message: msg,
+		}
+	}
+
+	return {
+		code: ErrCode.INTERNAL_ERROR,
+		message: msg,
+		data: err.data
 	}
 }
