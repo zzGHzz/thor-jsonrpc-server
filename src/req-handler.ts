@@ -1,0 +1,189 @@
+'use strict';
+
+import { Wallet, Net } from '@vechain/connex-driver';
+import * as thor from 'web3-providers-connex';
+import { JsonRpcRequest, JsonRpcResponse, parseReqData } from './json-rpc';
+import WebSocket from 'websocket';
+import http from 'http';
+import { parse as parseEthRawTx } from '@ethersproject/transactions';
+
+import { now } from './utils';
+
+export class ReqHandler {
+	private readonly provider: thor.ConnexProvider;
+
+	constructor(opt: {
+		connex: Connex;
+		net?: Net;
+		wallet?: Wallet;
+	}) {
+		this.provider = new thor.ConnexProvider(opt);
+	}
+
+	handleWsReq = async (req: WebSocket.Message, conn: WebSocket.connection) => {
+		const data = parseWsReq(req, conn);
+		if (!data) { return; }
+
+		const result = await this._request(data);
+
+		sendWsResponse(conn, result);
+	}
+
+	handleHttpReq = async (req: http.IncomingMessage, resp: http.ServerResponse) => {
+		const data = await parseHttpReq(req, resp);
+		if (!data) { return; }
+
+		const result = await this._request(data);
+
+		sendHttpResponse(resp, result);
+	}
+
+	private _request = async (req: JsonRpcRequest): Promise<JsonRpcResponse> => {
+		if (req.method === 'eth_sendRawTransaction') {
+			try {
+				const params = req.params || [];
+				const ethTx = parseEthRawTx(params[0]);
+				req.method = 'eth_sendTransaction';
+				req.params = [{
+					from: ethTx.from,
+					to: ethTx.to || null,
+					gas: ethTx.gasLimit.toNumber(),
+					value: ethTx.value.toHexString(),
+					data: ethTx.data,
+				}];
+			} catch { }
+		}
+
+		try {
+			const result = await this.provider.request({
+				method: req.method,
+				params: req.params || []
+			});
+			return {
+				id: req.id,
+				jsonrpc: '2.0',
+				result: result,
+			};
+		} catch (err: any) {
+			return {
+				id: req.id,
+				jsonrpc: '2.0',
+				error: err,
+			};
+		}
+	}
+}
+
+function sendWsResponse(conn: WebSocket.connection, result: any) {
+	console.log(`${now()} Sending ws response ${JSON.stringify(result)}`);
+
+	conn.sendUTF(JSON.stringify(result));
+}
+
+function sendHttpResponse(resp: http.ServerResponse, result: any) {
+	// console.log(`${now()} Sending http response ${JSON.stringify(result)}`);
+
+	if (result) {
+		const responseStr = JSON.stringify(result);
+		resp.setHeader('Content-Type', 'application/json');
+		resp.setHeader('Content-Length', Buffer.byteLength(responseStr));
+		resp.write(responseStr);
+	} else {
+		// Respond 204 for notifications with no response
+		resp.setHeader('Content-Length', 0);
+		resp.statusCode = 204;
+	}
+	resp.end();
+}
+
+async function parseHttpReq(
+	req: http.IncomingMessage,
+	resp: http.ServerResponse
+): Promise<JsonRpcRequest | null> {
+	const err = checkHttpReq(req, '/');
+	if (err) {
+		sendHttpError(resp, err.statusCode, err.message);
+		return null;
+	}
+
+	const buffers = [];
+	for await (const chunk of req) {
+		buffers.push(chunk);
+	}
+
+	const data = Buffer.concat(buffers).toString();
+
+	const method = <string>(JSON.parse(data)).method;
+	if (
+		method !== 'eth_getBalance' &&
+		method !== 'eth_blockNumber' &&
+		method !== 'eth_getBlockByNumber'
+	) {
+		console.log(`${now()} Processing http request ${data}`);
+	}
+
+	try {
+		return parseReqData(data);
+	} catch (err: any) {
+		sendHttpResponse(resp, err);
+		return null;
+	}
+}
+
+function checkHttpReq(req: http.IncomingMessage, path: string) {
+	let err;
+	if (req.url !== path) {
+		err = { statusCode: 404 };
+	} else if (req.method !== 'POST') {
+		err = { statusCode: 405 };
+	} else if (!req.headers['content-type'] || (req.headers['content-type'] !== 'application/json'
+		&& !req.headers['content-type'].startsWith('application/json;'))) {
+		err = { statusCode: 415 };
+		// } else if (!req.headers.accept || (req.headers.accept !== 'application/json'
+		// 	&& !req.headers.accept.split(',').some((value) => {
+		// 		const trimmedValue = value.trim();
+		// 		return trimmedValue === 'application/json' || trimmedValue.startsWith('application/json;');
+		// 	}))) {
+		// 	err = { statusCode: 400, message: consts.INVALID_ACCEPT_HEADER_MSG };
+	} else {
+		if (req.headers['content-length']) {
+			const reqContentLength = parseInt(req.headers['content-length'], 10);
+			if (Number.isNaN(reqContentLength) || reqContentLength < 0) {
+				err = { statusCode: 400, message: 'Invalid content-length header' };
+			}
+		}
+	}
+	return err;
+}
+
+function sendHttpError(resp: http.ServerResponse, statusCode: number, message?: string) {
+	resp.statusCode = statusCode;
+	if (message) {
+		const formattedMessage = `{"error":"${message}"}`;
+		resp.setHeader('Content-Type', 'application/json');
+		resp.setHeader('Content-Length', Buffer.byteLength(formattedMessage));
+		resp.write(formattedMessage);
+	}
+	resp.end();
+}
+
+function parseWsReq(
+	msg: WebSocket.Message,
+	conn: WebSocket.connection
+): JsonRpcRequest | null {
+	let data: string;
+	if (msg.type === 'utf8') {
+		data = msg.utf8Data;
+	} else {
+		data = msg.binaryData.toString();
+	}
+
+	console.log(`${now()} Processing ws request ${data}`);
+
+	try {
+		return parseReqData(data);
+	} catch (err) {
+		conn.sendUTF(JSON.stringify(err));
+		return null;
+	}
+}

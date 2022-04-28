@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"target": "es6",
+		"module": "commonjs",
+
+		"outDir": "dist",
+		"declaration": true,
+		"inlineSourceMap": true,
+
+		"esModuleInterop": true,
+		"strict": true,
+		"allowSyntheticDefaultImports": true,
+	},
+	"include": [
+		"./src",
+	]
+}
