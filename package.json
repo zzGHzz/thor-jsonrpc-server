@@ -4,6 +4,9 @@
 	"description": "An Eth JSON-RPC server for the VeChain Thor protocol",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"files": [
+		"dist"
+	],
 	"scripts": {
 		"build": "rm -rf dist/ && node_modules/.bin/tsc -d -p . "
 	},
