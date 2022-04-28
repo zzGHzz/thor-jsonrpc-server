@@ -22,6 +22,7 @@ export const ethJsonRpcMethods = [
 	'eth_coinbase',
 	'eth_estimateGas',
 	'eth_feeHistory',
+	'eth_gasPrice',
 	'eth_getBalance',
 	'eth_getBlockByHash',
 	'eth_getBlockByNumber',
@@ -33,7 +34,7 @@ export const ethJsonRpcMethods = [
 	'eth_getTransactionByBlockHashAndIndex',
 	'eth_getTransactionByBlockNumberAndIndex',
 	'eth_getTransactionByHash',
-	'eth_getTransactionByHash',
+	'eth_getTransactionCount',
 	'eth_getTransactionReceipt',
 	'eth_getUncleByBlockHashAndIndex',
 	'eth_getUncleByBlockNumberAndIndex',
@@ -129,7 +130,10 @@ export function parseReqData(data: string): JsonRpcRequest {
 		throw {
 			id: json.id || null,
 			jsonrpc: '2.0',
-			error: getPredefinedErr(ErrCode.METHOD_NOT_FOUND)
+			error: {
+				code: ErrCode.METHOD_NOT_FOUND,
+				message: `Method not found: method=${json.method}`
+			}
 		};
 	}
 
